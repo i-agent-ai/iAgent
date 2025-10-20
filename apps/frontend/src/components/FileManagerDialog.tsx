@@ -20,6 +20,8 @@ import {
   Alert,
   Tooltip,
   Checkbox,
+  TextField,
+  InputAdornment,
 } from "@mui/material";
 import {
   Download as DownloadIcon,
@@ -28,6 +30,9 @@ import {
   Refresh as RefreshIcon,
   AttachFile as AttachFileIcon,
   Check as CheckIcon,
+  Visibility as VisibilityIcon,
+  Edit as EditIcon,
+  Search as SearchIcon,
 } from "@mui/icons-material";
 import { fileService, FileInfo } from "../services/fileService";
 
@@ -50,14 +55,29 @@ export const FileManagerDialog: React.FC<FileManagerDialogProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [renameDialog, setRenameDialog] = useState<{ open: boolean; file: FileInfo | null; newName: string }>({
+    open: false,
+    file: null,
+    newName: "",
+  });
 
   const loadFiles = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const filesData = await fileService.getFileList(50, 0);
-      setFiles(filesData);
+      const result = await fileService.listFiles({
+        q: searchQuery || undefined,
+        limit: 50,
+        page: 1,
+      });
+
+      if ('items' in result) {
+        setFiles(result.items);
+      } else {
+        setFiles([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load files");
     } finally {
@@ -69,7 +89,7 @@ export const FileManagerDialog: React.FC<FileManagerDialogProps> = ({
     if (open) {
       loadFiles();
     }
-  }, [open]);
+  }, [open, searchQuery]);
 
   const handleFileSelect = (file: FileInfo) => {
     setSelectedFile(file);
@@ -99,6 +119,30 @@ export const FileManagerDialog: React.FC<FileManagerDialogProps> = ({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
+  const handlePreview = (file: FileInfo) => {
+    fileService.previewFile(file.id);
+  };
+
+  const handleRenameClick = (file: FileInfo) => {
+    setRenameDialog({ open: true, file, newName: file.filename });
+  };
+
+  const handleRenameConfirm = async () => {
+    if (!renameDialog.file || !renameDialog.newName.trim()) return;
+    if (renameDialog.newName === renameDialog.file.filename) {
+      setRenameDialog({ open: false, file: null, newName: "" });
+      return;
+    }
+
+    try {
+      await fileService.renameFile(renameDialog.file.id, { filename: renameDialog.newName.trim() });
+      setRenameDialog({ open: false, file: null, newName: "" });
+      await loadFiles();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rename failed");
     }
   };
 
@@ -158,6 +202,23 @@ export const FileManagerDialog: React.FC<FileManagerDialogProps> = ({
       </DialogTitle>
 
       <DialogContent sx={{ p: 0 }}>
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
+          <TextField
+            fullWidth
+            size="small"
+            placeholder="Search files by name..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Box>
+
         {error && (
           <Alert
             severity="error"
@@ -276,6 +337,42 @@ export const FileManagerDialog: React.FC<FileManagerDialogProps> = ({
                       </TableCell>
                       <TableCell align="center">
                         <Box display="flex" gap={1} justifyContent="center">
+                          <Tooltip title="Preview file">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePreview(file);
+                              }}
+                              sx={{
+                                color: "info.main",
+                                "&:hover": {
+                                  backgroundColor: "info.50",
+                                },
+                              }}
+                            >
+                              <VisibilityIcon />
+                            </IconButton>
+                          </Tooltip>
+
+                          <Tooltip title="Rename file">
+                            <IconButton
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRenameClick(file);
+                              }}
+                              sx={{
+                                color: "primary.main",
+                                "&:hover": {
+                                  backgroundColor: "primary.50",
+                                },
+                              }}
+                            >
+                              <EditIcon />
+                            </IconButton>
+                          </Tooltip>
+
                           <Tooltip title="Download file">
                             <IconButton
                               size="small"
@@ -335,6 +432,47 @@ export const FileManagerDialog: React.FC<FileManagerDialogProps> = ({
           {showAttachButton ? "Cancel" : "Close"}
         </Button>
       </DialogActions>
+
+      {/* Rename Dialog */}
+      <Dialog
+        open={renameDialog.open}
+        onClose={() => setRenameDialog({ open: false, file: null, newName: "" })}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Rename File</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Filename"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={renameDialog.newName}
+            onChange={(e) => setRenameDialog({ ...renameDialog, newName: e.target.value })}
+            onKeyPress={(e) => {
+              if (e.key === "Enter") {
+                handleRenameConfirm();
+              }
+            }}
+            helperText="Enter the new filename"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameDialog({ open: false, file: null, newName: "" })}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleRenameConfirm}
+            color="primary"
+            variant="contained"
+            disabled={!renameDialog.newName.trim() || renameDialog.newName === renameDialog.file?.filename}
+          >
+            Rename
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Dialog>
   );
 };

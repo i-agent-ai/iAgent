@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -19,7 +19,11 @@ import {
   DialogContent,
   DialogActions,
   Tooltip,
-  Pagination,
+  // Pagination,
+  TextField,
+  MenuItem,
+  Stack,
+  InputAdornment,
 } from '@mui/material';
 import {
   Download as DownloadIcon,
@@ -28,8 +32,11 @@ import {
   Refresh as RefreshIcon,
   FilePresent as FileIcon,
   Visibility as VisibilityIcon,
+  Edit as EditIcon,
+  Upload as UploadIcon,
 } from '@mui/icons-material';
-import { fileService, FileInfo } from '../services/fileService';
+import { fileService, FileInfo, CursorListResponse, PageListResponse } from '../services/fileService';
+import SearchIcon from '@mui/icons-material/Search';
 
 interface FileListProps {
   onFileDeleted?: () => void;
@@ -40,27 +47,60 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [totalCount, setTotalCount] = useState(0);
-  const [page, setPage] = useState(1);
+  // const [page, setPage] = useState(1);
   const [selectedFile, setSelectedFile] = useState<FileInfo | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const filesPerPage = 10;
+  // Rename dialog state
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [fileToRename, setFileToRename] = useState<FileInfo | null>(null);
+  const [newFilename, setNewFilename] = useState('');
+  const [renaming, setRenaming] = useState(false);
 
-  const loadFiles = async () => {
+  // Search / filter / sort state
+  const [q, setQ] = useState('');
+  const [mimetype, setMimetype] = useState('');
+  const [sortBy, setSortBy] = useState<'size' | 'createdAt' | 'updatedAt'>('createdAt');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  // Infinite loading via cursor
+  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loaderRef = useRef<HTMLDivElement | null>(null);
+
+  // Debounced search query
+  const debouncedQ = useMemo(() => q, [q]);
+
+  const filesPerPage = 20;
+
+  const resetAndLoad = async () => {
     setLoading(true);
     setError(null);
-    
+    setFiles([]);
+    setNextCursor(undefined);
     try {
-      const skip = (page - 1) * filesPerPage;
-      const [filesData, count] = await Promise.all([
-        fileService.getFileList(filesPerPage, skip),
-        fileService.getFileCount(),
-      ]);
-      
-      setFiles(filesData);
-      setTotalCount(count);
+      const result = (await fileService.listFiles({
+        q: debouncedQ || undefined,
+        mimetype: mimetype || undefined,
+        sortBy,
+        sortOrder,
+        limit: filesPerPage,
+        page: 1,
+      })) as PageListResponse | CursorListResponse;
+
+      if ('items' in result && 'page' in (result as any)) {
+        const r = result as PageListResponse;
+        setFiles(r.items);
+        setTotalCount(r.total);
+        setNextCursor(undefined);
+      } else {
+        const r = result as CursorListResponse;
+        setFiles(r.items);
+        setTotalCount(r.items.length);
+        setNextCursor(r.nextCursor);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load files');
     } finally {
@@ -68,9 +108,46 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
     }
   };
 
+  const loadMore = async () => {
+    if (!nextCursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const result = (await fileService.listFiles({
+        q: debouncedQ || undefined,
+        mimetype: mimetype || undefined,
+        sortBy,
+        sortOrder,
+        limit: filesPerPage,
+        cursor: nextCursor,
+      })) as CursorListResponse;
+      setFiles(prev => [...prev, ...result.items]);
+      setTotalCount(prev => prev + result.items.length);
+      setNextCursor(result.nextCursor);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load more files');
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   useEffect(() => {
-    loadFiles();
-  }, [page]);
+    resetAndLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ, mimetype, sortBy, sortOrder]);
+
+  useEffect(() => {
+    const node = loaderRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          loadMore();
+        }
+      });
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loaderRef.current, nextCursor, isLoadingMore]);
 
   const handleDownload = async (file: FileInfo) => {
     try {
@@ -87,13 +164,13 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
 
   const handleDeleteConfirm = async () => {
     if (!fileToDelete) return;
-    
+
     setDeleting(true);
     try {
       await fileService.deleteFile(fileToDelete);
       setDeleteDialogOpen(false);
       setFileToDelete(null);
-      await loadFiles();
+      await resetAndLoad();
       onFileDeleted?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Delete failed');
@@ -102,8 +179,36 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
     }
   };
 
+  const handleRenameClick = (file: FileInfo) => {
+    setFileToRename(file);
+    setNewFilename(file.filename);
+    setRenameDialogOpen(true);
+  };
+
+  const handleRenameConfirm = async () => {
+    if (!fileToRename || !newFilename.trim()) return;
+    if (newFilename === fileToRename.filename) {
+      setRenameDialogOpen(false);
+      return;
+    }
+
+    setRenaming(true);
+    setError(null);
+    try {
+      await fileService.renameFile(fileToRename.id, { filename: newFilename.trim() });
+      setRenameDialogOpen(false);
+      setFileToRename(null);
+      setNewFilename('');
+      await resetAndLoad();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rename failed');
+    } finally {
+      setRenaming(false);
+    }
+  };
+
   const handleRefresh = () => {
-    loadFiles();
+    resetAndLoad();
   };
 
   const getFileIcon = (mimetype: string) => {
@@ -116,7 +221,7 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
     return '📁';
   };
 
-  const totalPages = Math.ceil(totalCount / filesPerPage);
+  // const totalPages = Math.ceil(totalCount / filesPerPage);
 
   if (loading && files.length === 0) {
     return (
@@ -129,18 +234,52 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
   return (
     <Paper elevation={2} sx={{ p: 3 }}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h6">
-          Files in MongoDB GridFS ({totalCount} total)
-        </Typography>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={handleRefresh}
-          disabled={loading}
-        >
+        <Typography variant="h6">Files in MongoDB GridFS ({totalCount} loaded)</Typography>
+        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={handleRefresh} disabled={loading}>
           Refresh
         </Button>
       </Box>
+
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} mb={2} alignItems={{ xs: 'stretch', sm: 'center' }}>
+        <TextField
+          size="small"
+          placeholder="Search filename or metadata"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          InputProps={{ startAdornment: (<InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>) }}
+          fullWidth
+        />
+        <TextField
+          size="small"
+          placeholder="MIME type (e.g., image/png)"
+          value={mimetype}
+          onChange={(e) => setMimetype(e.target.value)}
+          sx={{ minWidth: 220 }}
+        />
+        <TextField
+          select
+          size="small"
+          label="Sort by"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as any)}
+          sx={{ minWidth: 160 }}
+        >
+          <MenuItem value="createdAt">Created</MenuItem>
+          <MenuItem value="updatedAt">Updated</MenuItem>
+          <MenuItem value="size">Size</MenuItem>
+        </TextField>
+        <TextField
+          select
+          size="small"
+          label="Order"
+          value={sortOrder}
+          onChange={(e) => setSortOrder(e.target.value as any)}
+          sx={{ minWidth: 140 }}
+        >
+          <MenuItem value="desc">Desc</MenuItem>
+          <MenuItem value="asc">Asc</MenuItem>
+        </TextField>
+      </Stack>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -211,6 +350,38 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
                             <VisibilityIcon />
                           </IconButton>
                         </Tooltip>
+
+                        <Tooltip title="Rename">
+                          <IconButton
+                            size="small"
+                            onClick={() => handleRenameClick(file)}
+                          >
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+
+                        <Tooltip title="Replace">
+                          <IconButton
+                            size="small"
+                            onClick={async () => {
+                              const input = document.createElement('input');
+                              input.type = 'file';
+                              input.onchange = async () => {
+                                const f = (input.files && input.files[0]) || null;
+                                if (!f) return;
+                                try {
+                                  await fileService.replaceFile(file.id, f);
+                                  handleRefresh();
+                                } catch (err) {
+                                  setError(err instanceof Error ? err.message : 'Replace failed');
+                                }
+                              };
+                              input.click();
+                            }}
+                          >
+                            <UploadIcon />
+                          </IconButton>
+                        </Tooltip>
                         
                         <Tooltip title="Download">
                           <IconButton
@@ -247,16 +418,10 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
             </Table>
           </TableContainer>
 
-          {totalPages > 1 && (
-            <Box display="flex" justifyContent="center" mt={3}>
-              <Pagination
-                count={totalPages}
-                page={page}
-                onChange={(_, newPage) => setPage(newPage)}
-                color="primary"
-              />
-            </Box>
-          )}
+          {/* Infinite loader sentinel */}
+          <Box ref={loaderRef} display="flex" justifyContent="center" mt={2}>
+            {isLoadingMore && <CircularProgress size={20} />}
+          </Box>
         </>
       )}
 
@@ -317,6 +482,48 @@ export const FileList: React.FC<FileListProps> = ({ onFileDeleted }) => {
             disabled={deleting}
           >
             {deleting ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Rename Dialog */}
+      <Dialog
+        open={renameDialogOpen}
+        onClose={() => !renaming && setRenameDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Rename File</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Filename"
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={newFilename}
+            onChange={(e) => setNewFilename(e.target.value)}
+            disabled={renaming}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter' && !renaming) {
+                handleRenameConfirm();
+              }
+            }}
+            helperText="Enter the new filename for this file"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameDialogOpen(false)} disabled={renaming}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleRenameConfirm}
+            color="primary"
+            variant="contained"
+            disabled={renaming || !newFilename.trim() || newFilename === fileToRename?.filename}
+          >
+            {renaming ? 'Renaming...' : 'Rename'}
           </Button>
         </DialogActions>
       </Dialog>

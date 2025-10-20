@@ -35,6 +35,7 @@ import {
   Clear as ClearIcon,
   Refresh as RefreshIcon,
   CloudUpload as UploadIcon,
+  Edit as EditIcon,
 } from "@mui/icons-material";
 import { useTheme } from "@mui/material/styles";
 import { format } from "date-fns";
@@ -100,6 +101,11 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({
     element: HTMLElement;
     document: DocumentFile;
   } | null>(null);
+  const [renameDialog, setRenameDialog] = useState<{
+    open: boolean;
+    document?: DocumentFile;
+    newName: string;
+  }>({ open: false, newName: "" });
 
   const loadDocuments = useCallback(
     async (resetPage = false) => {
@@ -194,6 +200,30 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({
 
   const handleBulkDeleteClick = () => {
     setBulkDeleteDialog({ open: true, documents: selectedDocuments });
+  };
+
+  const handleRenameClick = (document: DocumentFile) => {
+    setRenameDialog({ open: true, document, newName: document.name });
+  };
+
+  const handleRenameDocument = async () => {
+    if (!renameDialog.document || !renameDialog.newName.trim()) return;
+    if (renameDialog.newName === renameDialog.document.name) {
+      setRenameDialog({ open: false, newName: "" });
+      return;
+    }
+
+    try {
+      await documentService.renameDocument(
+        renameDialog.document.id,
+        renameDialog.newName.trim()
+      );
+      await loadDocuments();
+      setRenameDialog({ open: false, newName: "" });
+    } catch (error) {
+      console.error("Rename failed:", error);
+      setError(error instanceof Error ? error.message : "Failed to rename document");
+    }
   };
 
   const handleContextMenu = (
@@ -394,12 +424,34 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({
                         <DeleteIcon />
                       </IconButton>
                     ) : (
-                      <IconButton
-                        onClick={(e) => handleContextMenu(e, document)}
-                        size="small"
-                      >
-                        <MoreIcon />
-                      </IconButton>
+                      <Box display="flex" gap={0.5}>
+                        <IconButton
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDocumentPreview?.(document);
+                          }}
+                          size="small"
+                          title="Preview"
+                        >
+                          <PreviewIcon />
+                        </IconButton>
+                        <IconButton
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRenameClick(document);
+                          }}
+                          size="small"
+                          title="Rename"
+                        >
+                          <EditIcon />
+                        </IconButton>
+                        <IconButton
+                          onClick={(e) => handleContextMenu(e, document)}
+                          size="small"
+                        >
+                          <MoreIcon />
+                        </IconButton>
+                      </Box>
                     )}
                   </ListItemSecondaryAction>
                 </ListItem>
@@ -517,6 +569,52 @@ export const DocumentManager: React.FC<DocumentManagerProps> = ({
             variant="contained"
           >
             {t("deleteAll")} ({bulkDeleteDialog.documents.length})
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Rename Document Dialog */}
+      <Dialog
+        open={renameDialog.open}
+        onClose={() => setRenameDialog({ open: false, newName: "" })}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>{t("renameDocument")}</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            margin="dense"
+            label={t("fileName")}
+            type="text"
+            fullWidth
+            variant="outlined"
+            value={renameDialog.newName}
+            onChange={(e) =>
+              setRenameDialog({ ...renameDialog, newName: e.target.value })
+            }
+            onKeyPress={(e) => {
+              if (e.key === "Enter") {
+                handleRenameDocument();
+              }
+            }}
+            helperText={t("enterNewFileName")}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRenameDialog({ open: false, newName: "" })}>
+            {t("cancel")}
+          </Button>
+          <Button
+            onClick={handleRenameDocument}
+            color="primary"
+            variant="contained"
+            disabled={
+              !renameDialog.newName.trim() ||
+              renameDialog.newName === renameDialog.document?.name
+            }
+          >
+            {t("rename")}
           </Button>
         </DialogActions>
       </Dialog>

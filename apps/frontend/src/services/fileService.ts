@@ -41,6 +41,30 @@ export interface FileListResponse {
   total: number;
 }
 
+export interface FileListQuery {
+  q?: string;
+  mimetype?: string;
+  sortBy?: 'size' | 'createdAt' | 'updatedAt';
+  sortOrder?: 'asc' | 'desc';
+  // page mode
+  page?: number;
+  // shared
+  limit?: number;
+  // cursor mode
+  cursor?: string;
+}
+
+export type CursorListResponse = {
+  items: FileInfo[];
+  nextCursor?: string;
+};
+
+export type PageListResponse = {
+  items: FileInfo[];
+  page: number;
+  total: number;
+};
+
 /**
  * Validate a single file against constraints
  */
@@ -186,6 +210,30 @@ class FileService {
     return response.json();
   }
 
+  /**
+   * Advanced list with search/filter/sort and cursor/page pagination.
+   * If `cursor` is provided, returns CursorListResponse; else returns PageListResponse.
+   */
+  async listFiles(params: FileListQuery = {}): Promise<CursorListResponse | PageListResponse> {
+    const query = new URLSearchParams();
+    if (params.q) query.set('q', params.q);
+    if (params.mimetype) query.set('mimetype', params.mimetype);
+    if (params.sortBy) query.set('sortBy', params.sortBy);
+    if (params.sortOrder) query.set('sortOrder', params.sortOrder);
+    if (typeof params.limit === 'number') query.set('limit', String(params.limit));
+    if (params.cursor) {
+      query.set('cursor', params.cursor);
+    } else if (typeof params.page === 'number') {
+      query.set('page', String(params.page));
+    }
+
+    const response = await fetch(`${this.baseUrl}/list?${query.toString()}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch files: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
   async getFileCount(): Promise<number> {
     const response = await fetch(`${this.baseUrl}/count`);
     
@@ -232,6 +280,32 @@ class FileService {
   previewFile(fileId: string): void {
     const url = this.getPreviewUrl(fileId);
     window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  async renameFile(fileId: string, payload: { filename?: string; metadata?: any }): Promise<FileInfo> {
+    const response = await fetch(`${this.baseUrl}/${fileId}/rename`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to rename file: ${response.statusText}`);
+    }
+    return response.json();
+  }
+
+  async replaceFile(fileId: string, file: File): Promise<FileUploadResult> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseUrl}/${fileId}`, {
+      method: 'PUT',
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to replace file: ${response.statusText}`);
+    }
+    return response.json();
   }
 
   async deleteFile(fileId: string): Promise<void> {

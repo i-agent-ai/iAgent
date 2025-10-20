@@ -271,11 +271,24 @@ export class DocumentService {
         throw new Error(`Failed to fetch documents: ${response.statusText}`);
       }
 
-      const files: unknown = await response.json();
-      if (!Array.isArray(files)) {
+      const data: unknown = await response.json();
+
+      // Handle both array format (old) and object format (new API response)
+      let files: any[];
+      let total: number;
+
+      if (Array.isArray(data)) {
+        // Old format: plain array
+        files = data;
+        total = await this.getDocumentCount();
+      } else if (data && typeof data === 'object' && 'items' in data) {
+        // New format: {items, page, total}
+        files = (data as any).items || [];
+        total = (data as any).total || 0;
+      } else {
         throw new Error('Unexpected response format for files list');
       }
-      const total = await this.getDocumentCount();
+
       return {
         documents: files.map((f) => this.mapFileInfoToDocument(f as any)),
         total,
@@ -314,6 +327,38 @@ export class DocumentService {
       return await response.blob();
     } catch (error) {
       throw new Error(`Download failed: ${error}`);
+    }
+  }
+
+  // Rename document
+  async renameDocument(documentId: string, newName: string): Promise<DocumentFile> {
+    if (this.useMockData) {
+      const document = mockDocumentStore.getDocumentById(documentId);
+      if (!document) {
+        throw new Error('Document not found');
+      }
+      document.name = newName;
+      return document;
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/files/${documentId}/rename`, {
+        method: 'PATCH',
+        headers: {
+          ...this.getHeaders(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ filename: newName })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Rename failed: ${response.statusText}`);
+      }
+
+      const fileInfo = await response.json();
+      return this.mapFileInfoToDocument(fileInfo);
+    } catch (error) {
+      throw new Error(`Rename failed: ${error}`);
     }
   }
 

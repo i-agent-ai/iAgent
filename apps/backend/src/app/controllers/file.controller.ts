@@ -2,24 +2,27 @@ import {
   Controller,
   Post,
   Get,
+  Put,
+  Patch,
   Delete,
   Param,
   Res,
   UseInterceptors,
   UploadedFile,
   UploadedFiles,
+  Body,
   Query,
   BadRequestException,
   NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { Response } from 'express';
-import { ApiTags, ApiOperation, ApiResponse, ApiConsumes, ApiParam, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { ApiTags, ApiOperation, ApiResponse, ApiConsumes, ApiParam, ApiQuery, ApiBearerAuth, ApiOkResponse } from '@nestjs/swagger';
 import { FileService, FileUploadResult, FileInfo } from '../services/file.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UserId } from '../decorators/user.decorator';
-import { Public } from '../decorators/public.decorator';
+// import { Public } from '../decorators/public.decorator';
 
 @ApiTags('Files')
 @Controller('files')
@@ -49,56 +52,100 @@ export class FileController {
   })
   @ApiResponse({ status: 400, description: 'Bad request - no file provided' })
   async uploadFile(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: unknown,
   ): Promise<FileUploadResult> {
     if (!file) {
       throw new BadRequestException('No file provided');
     }
 
-    return this.fileService.uploadFile(file);
+    return this.fileService.uploadFile(file as any);
   }
 
   @Get('list')
   @ApiOperation({
     summary: 'List uploaded files',
-    description: 'Get a list of all uploaded files with pagination',
+    description: 'Get a list of uploaded files with search, filters, sort and pagination (cursor or page mode)',
   })
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Number of files to return (default: 50)' })
-  @ApiQuery({ name: 'skip', required: false, type: Number, description: 'Number of files to skip (default: 0)' })
-  @ApiResponse({
-    status: 200,
+  @ApiQuery({ name: 'q', required: false, type: String, description: 'Search term applied to filename and metadata fields' })
+  @ApiQuery({ name: 'mimetype', required: false, type: String, description: 'Filter by MIME type' })
+  @ApiQuery({ name: 'sortBy', required: false, enum: ['size', 'createdAt', 'updatedAt'], description: 'Sort field' })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'], description: 'Sort order' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Max items per page (default: 50, max: 100)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (for page mode)' })
+  @ApiQuery({ name: 'cursor', required: false, type: String, description: 'Cursor (for infinite scroll mode)' })
+  @ApiOkResponse({
     description: 'List of files retrieved successfully',
     schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          filename: { type: 'string' },
-          size: { type: 'number' },
-          mimetype: { type: 'string' },
-          uploadDate: { type: 'string', format: 'date-time' },
-          metadata: { type: 'object' },
+      oneOf: [
+        {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  filename: { type: 'string' },
+                  size: { type: 'number' },
+                  mimetype: { type: 'string' },
+                  uploadDate: { type: 'string', format: 'date-time' },
+                  metadata: { type: 'object' },
+                },
+              },
+            },
+            nextCursor: { type: 'string', nullable: true },
+          },
         },
-      },
+        {
+          type: 'object',
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  filename: { type: 'string' },
+                  size: { type: 'number' },
+                  mimetype: { type: 'string' },
+                  uploadDate: { type: 'string', format: 'date-time' },
+                  metadata: { type: 'object' },
+                },
+              },
+            },
+            page: { type: 'number' },
+            total: { type: 'number' },
+          },
+        },
+      ],
     },
   })
   async listFiles(
+    @Query('q') q?: string,
+    @Query('mimetype') mimetype?: string,
+    @Query('sortBy') sortBy?: 'size' | 'createdAt' | 'updatedAt',
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
     @Query('limit') limit?: string,
-    @Query('skip') skip?: string,
-  ): Promise<FileInfo[]> {
+    @Query('page') page?: string,
+    @Query('cursor') cursor?: string,
+  ): Promise<{ items: FileInfo[]; nextCursor?: string } | { items: FileInfo[]; page: number; total: number }> {
     const limitNum = limit ? parseInt(limit, 10) : 50;
-    const skipNum = skip ? parseInt(skip, 10) : 0;
-
     if (limitNum < 1 || limitNum > 100) {
       throw new BadRequestException('Limit must be between 1 and 100');
     }
 
-    if (skipNum < 0) {
-      throw new BadRequestException('Skip must be 0 or greater');
-    }
+    const pageNum = page ? parseInt(page, 10) : undefined;
 
-    return this.fileService.listFiles(limitNum, skipNum);
+    return this.fileService.listFilesAdvanced({
+      q,
+      mimetype,
+      sortBy,
+      sortOrder,
+      limit: limitNum,
+      page: pageNum,
+      cursor,
+    });
   }
 
   @Get('count')
@@ -207,6 +254,69 @@ export class FileController {
     return this.fileService.getFileInfo(id);
   }
 
+  @Patch(':id/rename')
+  @ApiOperation({
+    summary: 'Rename or update metadata of a file',
+    description: 'Updates filename and/or metadata of a GridFS file (no content change)',
+  })
+  @ApiParam({ name: 'id', description: 'File ID' })
+  @ApiOkResponse({
+    description: 'File renamed/metadata updated successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        filename: { type: 'string' },
+        size: { type: 'number' },
+        mimetype: { type: 'string' },
+        uploadDate: { type: 'string', format: 'date-time' },
+        metadata: { type: 'object' },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'File not found' })
+  async renameFile(
+    @Param('id') id: string,
+    @Body() body: { filename?: string; metadata?: Record<string, unknown> },
+  ): Promise<FileInfo> {
+    if (!body || (!body.filename && !body.metadata)) {
+      throw new BadRequestException('Nothing to update');
+    }
+    return this.fileService.renameFile(id, body as any);
+  }
+
+  @Put(':id')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Replace file content',
+    description: 'Replace the contents of a file (no versioning). Returns new file info (id may change).',
+  })
+  @ApiParam({ name: 'id', description: 'File ID' })
+  @ApiOkResponse({
+    description: 'File replaced successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        filename: { type: 'string' },
+        size: { type: 'number' },
+        mimetype: { type: 'string' },
+        uploadDate: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'File not found' })
+  async replaceFile(
+    @Param('id') id: string,
+    @UploadedFile() file: unknown,
+  ): Promise<FileUploadResult> {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+    return this.fileService.replaceFile(id, file as any);
+  }
+
   @Delete(':id')
   @ApiOperation({
     summary: 'Delete a file',
@@ -254,7 +364,7 @@ export class FileController {
   async uploadChatFiles(
     @Param('chatId') chatId: string,
     @UserId() userId: string,
-    @UploadedFiles() files: Express.Multer.File[]
+    @UploadedFiles() files: unknown[]
   ): Promise<FileUploadResult[]> {
     if (!files || files.length === 0) {
       throw new BadRequestException('No files provided');
@@ -266,7 +376,7 @@ export class FileController {
       uploadedAt: new Date(),
     };
 
-    return await this.fileService.uploadFiles(files, metadata);
+    return await this.fileService.uploadFiles(files as any[], metadata);
   }
 
   @Get('chat/:chatId')
