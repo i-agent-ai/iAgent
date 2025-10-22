@@ -5,55 +5,36 @@
   // Features to install in the container
   "features": {
     "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/mongodb:1": {
-      "version": "7.0"
-    }
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
   // VS Code extensions to install
   "customizations": {
     "vscode": {
       "extensions": [
-        // Nx and Angular extensions
         "nrwl.angular-console",
         "ms-vscode.vscode-typescript-next",
-        
-        // React and frontend development
         "bradlc.vscode-tailwindcss",
         "esbenp.prettier-vscode",
         "ms-vscode.vscode-json",
-        
-        // NestJS and backend development
         "ms-vscode.vscode-node-azure-pack",
         "ms-vscode.vscode-node-debug2",
-        
-        // General development tools
         "ms-vscode.vscode-eslint",
         "ms-vscode.vscode-jest",
         "formulahendry.auto-rename-tag",
         "christian-kohler.path-intellisense",
         "redhat.vscode-yaml",
-        
-        // Git and version control
         "eamodio.gitlens",
         "github.vscode-pull-request-github",
-        
-        // Database tools
         "mongodb.mongodb-vscode",
-        
-        // Testing
         "ms-vscode.test-adapter-converter",
         "hbenl.vscode-test-explorer"
       ],
       
       "settings": {
-        // TypeScript settings
         "typescript.preferences.importModuleSpecifier": "relative",
         "typescript.suggest.autoImports": true,
         "typescript.updateImportsOnFileMove.enabled": "always",
-        
-        // ESLint settings
         "eslint.workingDirectories": [
           "apps/frontend",
           "apps/backend",
@@ -68,13 +49,9 @@
           "typescript",
           "typescriptreact"
         ],
-        
-        // Prettier settings
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "esbenp.prettier-vscode",
         "prettier.requireConfig": true,
-        
-        // Tailwind CSS IntelliSense
         "tailwindCSS.includeLanguages": {
           "typescript": "typescript",
           "typescriptreact": "typescriptreact"
@@ -84,13 +61,9 @@
           ["classnames\\(([^)]*)\\)", "'([^']*)'"],
           ["cva\\(([^)]*)\\)", "[\"'`]([^\"'`]*).*?[\"'`]"]
         ],
-        
-        // File associations
         "files.associations": {
           "*.css": "tailwindcss"
         },
-        
-        // Terminal settings
         "terminal.integrated.defaultProfile.linux": "bash",
         "terminal.integrated.profiles.linux": {
           "bash": {
@@ -98,29 +71,16 @@
             "args": ["-l"]
           }
         },
-        
-        // Nx specific settings
         "nx.enableLibraryImports": true,
         "nx.showProjectGraph": true,
-        
-        // Jest settings
         "jest.jestCommandLine": "npx nx test",
-        "jest.autoRun": "off",
-        
-        // MongoDB settings
-        "mongo.shell.path": "/usr/bin/mongosh"
+        "jest.autoRun": "off"
       }
     }
   },
 
   // Ports to forward
-  "forwardPorts": [
-    3000,  // Frontend dev server
-    3001,  // Backend dev server
-    4200,  // Alternative frontend port
-    4873,  // Local registry
-    27017  // MongoDB
-  ],
+  "forwardPorts": [3000, 3001, 4200, 4873],
   "portsAttributes": {
     "3000": {
       "label": "Frontend (React)",
@@ -137,10 +97,6 @@
     "4873": {
       "label": "Local Registry",
       "onAutoForward": "silent"
-    },
-    "27017": {
-      "label": "MongoDB",
-      "onAutoForward": "silent"
     }
   },
 
@@ -153,8 +109,7 @@
   // Environment variables
   "containerEnv": {
     "NODE_ENV": "development",
-    "NX_CLOUD_DISTRIBUTED_EXECUTION": "false",
-    "MONGODB_URI": "mongodb://localhost:27017/iagent"
+    "NX_CLOUD_DISTRIBUTED_EXECUTION": "false"
   },
 
   // User configuration
