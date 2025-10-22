@@ -1,3 +1,3 @@
 User-agent: *
 Allow: /
-Sitemap: https://morbargig.github.io/iAgent/sitemap.xml
+Sitemap: https://i-agent-ai.github.io/iAgent/sitemap.xml
